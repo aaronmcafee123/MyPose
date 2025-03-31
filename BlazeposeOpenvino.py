@@ -408,23 +408,44 @@ class BlazeposeOpenvino:
 
 
           
-    def recognize_gesture(self, r):           
-
-        def angle_with_y(v):
+    #def recognize_gesture(self, r):           
+#
+ #       def angle_with_y(v):
             # v: 2d vector (x,y)
             # Returns angle in degree ofv with y-axis of image plane
-            if v[1] == 0:
-                return 90
-            angle = atan2(v[0], v[1])
-            return np.degrees(angle)
+  #          if v[1] == 0:
+   #             return 90
+    #        angle = atan2(v[0], v[1])
+     #       return np.degrees(angle)
 
         # For the demo, we want to recognize the flag semaphore alphabet
         # For this task, we just need to measure the angles of both arms with vertical
-        right_arm_angle = angle_with_y(r.landmarks_abs[14,:2] - r.landmarks_abs[12,:2])
-        left_arm_angle = angle_with_y(r.landmarks_abs[13,:2] - r.landmarks_abs[11,:2])
-        right_pose = int((right_arm_angle +202.5) / 45) % 8
-        left_pose = int((left_arm_angle +202.5) / 45) % 8
-        r.gesture = semaphore_flag.get((right_pose, left_pose), None)
+      #  right_arm_angle = angle_with_y(r.landmarks_abs[14,:2] - r.landmarks_abs[12,:2])
+       # left_arm_angle = angle_with_y(r.landmarks_abs[13,:2] - r.landmarks_abs[11,:2])
+        #right_pose = int((right_arm_angle +202.5) / 45) % 8
+        #left_pose = int((left_arm_angle +202.5) / 45) % 8
+        #r.gesture = semaphore_flag.get((right_pose, left_pose), None)
+
+    def recognize_gesture(self, r):    #repurposed gesture recognition for posture correction
+
+        left_tilt = r.landmarks[11, 2] - r.landmarks[23, 2]#11 is left shoulder, 23 left hip
+        right_tilt = r.landmarks[12, 2] - r.landmarks[24, 2]#12 is right shoulder, 24 is right hip
+
+        avg_tilt = (left_tilt + right_tilt) / 2.0
+        r.gesture = "Bad Posture"
+
+        threshold = -0.1
+        if avg_tilt < threshold:
+            r.gesture = "Bad Posture"
+            if left_tilt > right_tilt:
+                print("right side slouching")
+            elif right_tilt > left_tilt:
+                print("left side slouching")
+        else:
+            r.gesture = "Good Posture"
+            print("well done!")
+
+        
                 
     def run(self):
 
