@@ -69,6 +69,14 @@ semaphore_flag = {
         (1,6):'Y', (5,6):'Z'
 }
 
+# Define posture types
+POSTURE_TYPES = {
+    "shoulder_hip": "Shoulder to Hip Vertical Alignment",
+    "head_shoulder": "Head to Shoulder Alignment",
+    "spine_vertical": "Spine Vertical Alignment",
+    "shoulder_level": "Shoulder Level"
+}
+
 class BlazeposeOpenvino:
     def __init__(self, input_src=None,
                 pd_xml=POSE_DETECTION_MODEL, 
@@ -85,7 +93,9 @@ class BlazeposeOpenvino:
                 crop=False,
                 multi_detection=False,
                 force_detection=False,
-                output=None):
+                output=None,
+                posture_threshold=None,
+                posture_type="shoulder_hip"):
         
         self.pd_score_thresh = pd_score_thresh
         self.pd_nms_thresh = pd_nms_thresh
@@ -97,6 +107,47 @@ class BlazeposeOpenvino:
         self.crop = crop
         self.multi_detection = multi_detection
         self.force_detection = force_detection
+
+        self.posture_type = posture_type
+
+        # If no posture threshold is provided, ask the user
+        if posture_threshold is None:
+            print("\n=== POSTURE DETECTION SETTINGS ===")
+            
+            # Display posture type options
+            print("\nAvailable posture types:")
+            for i, (key, desc) in enumerate(POSTURE_TYPES.items()):
+                print(f"{i+1}. {desc} [{key}]")
+            
+            try:
+                type_choice = int(input("\nSelect posture type (number): "))
+                if 1 <= type_choice <= len(POSTURE_TYPES):
+                    self.posture_type = list(POSTURE_TYPES.keys())[type_choice-1]
+                else:
+                    print(f"Invalid choice. Using default: {self.posture_type}")
+            except ValueError:
+                print(f"Invalid input. Using default: {self.posture_type}")
+            
+            print(f"\nSelected posture type: {POSTURE_TYPES[self.posture_type]}")
+            
+            try:
+                self.posture_threshold = float(input("\nEnter posture threshold value: \n"
+                                               f"- For shoulder_hip: recommended -0.1 to 0.1\n"
+                                               f"- For head_shoulder: recommended -0.1 to 0.1\n"
+                                               f"- For spine_vertical: recommended -0.15 to 0.15\n"
+                                               f"- For shoulder_level: recommended -0.05 to 0.05\n"
+                                               f"Your threshold value: "))
+            except ValueError:
+                self.posture_threshold = -0.1
+                print(f"Invalid input. Using default threshold: {self.posture_threshold}")
+        else:
+            self.posture_threshold = posture_threshold
+        
+        print(f"\nPosture threshold set to: {self.posture_threshold}")
+        print(f"Posture type set to: {POSTURE_TYPES[self.posture_type]}")
+        print("===================================\n")
+
+
         if self.multi_detection:
             print("Warning: with multi-detection, smoothing filter is disabled and pose detection is forced on every frame.")
             self.smoothing = False
@@ -187,6 +238,12 @@ class BlazeposeOpenvino:
             else:
                 fourcc = cv2.VideoWriter_fourcc(*"MJPG")
                 self.output = cv2.VideoWriter(output,fourcc,self.video_fps,(video_width, video_height)) 
+
+        # Initialize posture feedback history
+        self.posture_feedback_history = []
+        self.max_feedback_history = 10  # Store last 10 feedback messages
+        self.feedback_display_duration = 3  # Display feedback for 3 seconds
+        self.last_feedback_time = time.time()
 
     def load_models(self, pd_xml, pd_device, lm_xml, lm_device):
 
@@ -404,47 +461,117 @@ class BlazeposeOpenvino:
             if self.use_gesture and self.show_gesture:
                 cv2.putText(frame, region.gesture, (region.landmarks_padded[6,0]-10, region.landmarks_padded[6,1]-50), 
                         cv2.FONT_HERSHEY_PLAIN, 5, (0,1190,255), 3)
+                
+
+    def recognize_gesture(self, r):
+        """Enhanced posture recognition with multiple types of posture detection"""
+        
+        posture_status = "Unknown"
+        feedback = ""
+        
+        if self.posture_type == "shoulder_hip":
+            # Original posture detection: shoulder-to-hip vertical alignment
+            left_tilt = r.landmarks[11, 2] - r.landmarks[23, 2]  # 11 is left shoulder, 23 left hip
+            right_tilt = r.landmarks[12, 2] - r.landmarks[24, 2]  # 12 is right shoulder, 24 is right hip
             
+            avg_tilt = (left_tilt + right_tilt) / 2.0
+            current_value = avg_tilt
+            
+            if avg_tilt < self.posture_threshold:
+                posture_status = "Bad Posture"
+                if left_tilt > right_tilt:
+                    feedback = "Right side slouching"
+                elif right_tilt > left_tilt:
+                    feedback = "Left side slouching"
+                else:
+                    feedback = "Slouching forward"
+            else:
+                posture_status = "Good Posture"
+                feedback = "Well done!"
+                
+        elif self.posture_type == "head_shoulder":
+            # Head position relative to shoulders
+            nose_point = r.landmarks[0, 2]  # Nose landmark
+            left_shoulder = r.landmarks[11, 2]  # Left shoulder
+            right_shoulder = r.landmarks[12, 2]  # Right shoulder
+            avg_shoulder_z = (left_shoulder + right_shoulder) / 2.0
+            
+            head_forward = nose_point - avg_shoulder_z  # Positive when head is forward
+            current_value = head_forward
+            
+            if head_forward < self.posture_threshold:
+                posture_status = "Good Posture"
+                feedback = "Good head position"
+            else:
+                posture_status = "Bad Posture"
+                feedback = "Head too far forward"
+                
+        elif self.posture_type == "spine_vertical":
+            # Spine straightness (hip to shoulder to ear)
+            mid_hip = (r.landmarks[23, 2] + r.landmarks[24, 2]) / 2  # Mid-hip point Z
+            mid_shoulder = (r.landmarks[11, 2] + r.landmarks[12, 2]) / 2  # Mid-shoulder point Z
+            left_ear = r.landmarks[7, 2]  # Left ear Z
+            right_ear = r.landmarks[8, 2]  # Right ear Z
+            mid_ear = (left_ear + right_ear) / 2
+            
+            # Calculate spine curve deviation (how far from straight line)
+            hip_to_ear = mid_ear - mid_hip
+            hip_to_shoulder = mid_shoulder - mid_hip
+            expected_ear_z = mid_hip + 2 * hip_to_shoulder  # Extrapolated expected position if straight
+            spine_deviation = mid_ear - expected_ear_z
+            current_value = spine_deviation
+            
+            if abs(spine_deviation) < abs(self.posture_threshold):
+                posture_status = "Good Posture"
+                feedback = "Spine well aligned"
+            else:
+                posture_status = "Bad Posture"
+                if spine_deviation > 0:
+                    feedback = "Upper back hunched"
+                else:
+                    feedback = "Overextended posture"
+                    
+        elif self.posture_type == "shoulder_level":
+            # Shoulder levelness (are shoulders on same horizontal plane)
+            left_shoulder_y = r.landmarks[11, 1]  # Y coordinate (height) of left shoulder
+            right_shoulder_y = r.landmarks[12, 1]  # Y coordinate (height) of right shoulder
+            
+            shoulder_diff = left_shoulder_y - right_shoulder_y
+            current_value = shoulder_diff
+            
+            if abs(shoulder_diff) < abs(self.posture_threshold):
+                posture_status = "Good Posture"
+                feedback = "Shoulders level"
+            else:
+                posture_status = "Bad Posture"
+                if shoulder_diff > 0:
+                    feedback = "Left shoulder higher"
+                else:
+                    feedback = "Right shoulder higher"
+        
+        # Store feedback
+        self.add_feedback(feedback, posture_status, current_value)
+        
+        # Set gesture display 
+        r.gesture = posture_status
+        r.posture_details = f"{feedback} ({current_value:.3f})"
 
-
-          
-    #def recognize_gesture(self, r):           
-#
- #       def angle_with_y(v):
-            # v: 2d vector (x,y)
-            # Returns angle in degree ofv with y-axis of image plane
-  #          if v[1] == 0:
-   #             return 90
-    #        angle = atan2(v[0], v[1])
-     #       return np.degrees(angle)
-
-        # For the demo, we want to recognize the flag semaphore alphabet
-        # For this task, we just need to measure the angles of both arms with vertical
-      #  right_arm_angle = angle_with_y(r.landmarks_abs[14,:2] - r.landmarks_abs[12,:2])
-       # left_arm_angle = angle_with_y(r.landmarks_abs[13,:2] - r.landmarks_abs[11,:2])
-        #right_pose = int((right_arm_angle +202.5) / 45) % 8
-        #left_pose = int((left_arm_angle +202.5) / 45) % 8
-        #r.gesture = semaphore_flag.get((right_pose, left_pose), None)
-
-    def recognize_gesture(self, r):    #repurposed gesture recognition for posture correction
-
-        left_tilt = r.landmarks[11, 2] - r.landmarks[23, 2]#11 is left shoulder, 23 left hip
-        right_tilt = r.landmarks[12, 2] - r.landmarks[24, 2]#12 is right shoulder, 24 is right hip
-
-        avg_tilt = (left_tilt + right_tilt) / 2.0
-        r.gesture = "Bad Posture"
-
-        threshold = -0.1
-        if avg_tilt < threshold:
-            r.gesture = "Bad Posture"
-            if left_tilt > right_tilt:
-                print("right side slouching")
-            elif right_tilt > left_tilt:
-                print("left side slouching")
-        else:
-            r.gesture = "Good Posture"
-            print("well done!")
-
+    def add_feedback(self, message, status, value):
+        """Add feedback to history with timestamp"""
+        now = time.time()
+        self.posture_feedback_history.append({
+            'message': message,
+            'status': status,
+            'value': value,
+            'time': now
+        })
+        
+        # Keep only recent feedback
+        if len(self.posture_feedback_history) > self.max_feedback_history:
+            self.posture_feedback_history.pop(0)
+        
+        # Update timestamp for display purposes
+        self.last_feedback_time = now
         
                 
     def run(self):
