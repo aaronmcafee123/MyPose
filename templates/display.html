@@ -28,8 +28,8 @@
                       <div class="card-body">
                           <h4 class="card-title m-1 mb-3">Results</h4>
                           <div class="row align-items-center">
-                              <div class="col text-center display-6">GOOD</div>
-                              <div class="col text-center"><button type="button" class="btn btn-success btn-lg">83%</button></div>
+                              <div class="col text-center display-6">{{overall_posture}}</div>
+                              <div class="col text-center"><button type="button" class="btn {{overall_posture_color_value}} btn-lg">{{posture_quality}}%</button></div>
                           </div>
                       </div>
                     </div>
@@ -38,9 +38,11 @@
                       <div class="card-body">
                           <h5 class="card-title m-1 mb-3">Instructions for Pose Correction</h5>
                           <ul>
-                              <li>xxxx</li>
-                              <li>xxxx</li>
-                              <li>...</li>
+                              <li>{{posture_status.head_angle_status}}: {{feedback.head_angle_feedback}}</li>
+                              <li>{{posture_status.shoulder_angle_status}}: {{feedback.shoulder_angle_feedback}}</li>
+                              <li>{{posture_status.hips_angle_status}}: {{feedback.hips_angle_feedback}}</li>
+                              <li>{{posture_status.head_lean_status}}: {{feedback.head_lean_feedback}}</li>
+                              <li>{{posture_status.body_lean_status}}: {{feedback.body_lean_feedback}}</li>
                           </ul>
                       </div>
                     </div>

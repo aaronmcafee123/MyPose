@@ -11,9 +11,17 @@ from BlazeposeOpenvino import BlazeposeOpenvino, POSE_DETECTION_MODEL, LANDMARK_
 
 OUTPUT_IMG = "output.jpg"
 
+#VIDEO_SOURCE = "../videos/mixkit-cargo-ship-arriving-to-container-terminal-30979-hd-ready.mp4"
+#VIDEO_SOURCE = "./video/wheelchair-exercises.mp4"
+#VIDEO_SOURCE = "./video/sports-runner.mp4"
+
 app = Flask(__name__, static_folder='static')
 UPLOAD_FOLDER = 'uploads'
 app.config['UPLOAD_FOLDER'] = UPLOAD_FOLDER
+
+#@app.route('/')
+#def home():
+#    return render_template('index.html')
 
 os.makedirs(UPLOAD_FOLDER, exist_ok=True)
 
@@ -31,7 +39,7 @@ def process_image(img):
                 lm_xml=LANDMARK_MODEL_FULL,
                 lm_device="CPU",
                 lm_score_threshold=0.5,
-                use_gesture=False,
+                pose_correction=True,
                 smoothing=True,
                 filter_window_size=5,
                 filter_velocity_scale=10,
@@ -41,7 +49,11 @@ def process_image(img):
                 force_detection=False,
                 output=OUTPUT_IMG)
 
-    return ht.run()
+    img_ht = ht.run()
+
+    #print(ht.get_posture_feedback_history())
+
+    return img_ht, ht.get_posture_feedback_history()[0]
 
 ##
 
@@ -54,9 +66,21 @@ def upload():
             filepath = os.path.join(app.config['UPLOAD_FOLDER'], filename)
             file.save(filepath)
             #
-            processed_img = process_image(filepath)
+            (processed_img, posture_feedback_history) = process_image(filepath)
+            color_value='btn-success'
+            if posture_feedback_history['posture_quality'] < 50:
+                color_value = 'btn-danger'
+            elif posture_feedback_history['posture_quality'] < 75:
+                color_value = 'btn-warning'
             #
-            return render_template('display.html',filename=processed_img)
+            return render_template('display.html',
+                                   filename=processed_img,
+                                   overall_posture_color_value=color_value,
+                                   overall_posture=posture_feedback_history['overall_posture'],
+                                   posture_quality=int(posture_feedback_history['posture_quality']),
+                                   posture_status=posture_feedback_history['posture_status'],
+                                   feedback=posture_feedback_history['feedback'])
+
     return render_template('upload.html')
 
 @app.route('/uploads/<filename>')
