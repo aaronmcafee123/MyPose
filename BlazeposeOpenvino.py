@@ -80,8 +80,16 @@ class BlazeposeOpenvino:
                 crop=False,
                 multi_detection=False,
                 force_detection=False,
-                output=None
+                output=None,
+                thresholds=None
             ):
+        self.thresholds = thresholds or {
+            "head_angle": {"min": 85, "max": 95},
+            "shoulder_angle": {"min": -2.5, "max": 2.5},
+            "hips_angle": {"min": -5, "max": 5},
+            "head_lean": {"min": -2.5, "max": 2.5},
+            "body_lean": {"min": -2.5, "max": 2.5}
+        }
         
         self.pd_score_thresh = pd_score_thresh
         self.pd_nms_thresh = pd_nms_thresh
@@ -364,17 +372,8 @@ class BlazeposeOpenvino:
         good=(0,255,0)
         bad=(0,0,255)
 
-        #THRESHOLDS
-        min_head_angle_thres=85
-        max_head_angle_thres=95
-        min_shoulder_angle_thres=-2.5
-        max_shoulder_angle_thres=2.5
-        min_hips_angle_thres=-5
-        max_hips_angle_thres=5
-        min_head_lean_thres=-2.5
-        max_head_lean_thres=2.5
-        min_body_lean_thres=-2.5
-        max_body_lean_thres=2.5
+        # Use thresholds passed to constructor
+        thresholds = self.thresholds
 
         head_orientation=360*atan2(r.landmarks[0,1]-r.landmarks[34,1],r.landmarks[0,0]-r.landmarks[34,0])/2/pi
         shoulder_orientation=360*atan2(r.landmarks[11,1]-r.landmarks[12,1],r.landmarks[11,0]-r.landmarks[12,0])/2/pi
@@ -385,12 +384,12 @@ class BlazeposeOpenvino:
         #HEAD
         head_angle=head_orientation-shoulder_orientation
         #print(head_angle)
-        if head_angle<min_head_angle_thres:
+        if head_angle<thresholds["head_angle"]["min"]:
             head_angle_status = "Head Tilt" ## UPDATE TO TAKE INTO ACCOUNT QUALITY AT END
             head_angle_feedback = "Head is leaning towards the left side." ##CHECK IF NOT CORRECT
             for i in range(11):
                 COLORS_FULL_BODY[i]=bad
-        elif head_angle>max_head_angle_thres:
+        elif head_angle>thresholds["head_angle"]["max"]:
             head_angle_status = "Head Tilt" ## UPDATE TO TAKE INTO ACCOUNT QUALITY AT END
             head_angle_feedback = "Head is leaning towards the right side."
             for i in range(11):
@@ -404,12 +403,12 @@ class BlazeposeOpenvino:
         
         #SHOULDERS
         #print(shoulder_orientation)
-        if shoulder_orientation<min_shoulder_angle_thres:
+        if shoulder_orientation<thresholds["shoulder_angle"]["min"]:
             shoulder_angle_status = "Shoulder Tilt" 
             shoulder_angle_feedback = "Shoulders are leaning towards the left side." 
             for i in range(11,15):
                 COLORS_FULL_BODY[i]=bad
-        elif shoulder_orientation>max_shoulder_angle_thres:
+        elif shoulder_orientation>thresholds["shoulder_angle"]["max"]:
             shoulder_angle_status = "Shoulder Tilt"
             shoulder_angle_feedback = "Shoulders are leaning towards the right side."
             for i in range(11,15):
@@ -423,12 +422,12 @@ class BlazeposeOpenvino:
 
         #HIPS
         #print(hips_orientation)
-        if hips_orientation<min_hips_angle_thres:
+        if hips_orientation<thresholds["hips_angle"]["min"]:
             hips_angle_status = "Hip Tilt" 
             hips_angle_feedback = "Hips are leaning towards the left side. Make sure the hips are far back in the wheelchair and aligned." ##CHECK IF NOT CORRECT
             for i in range(23,27):
                 COLORS_FULL_BODY[i]=bad
-        elif hips_orientation>max_hips_angle_thres:
+        elif hips_orientation>thresholds["hips_angle"]["max"]:
             hips_angle_status = "Hip Tilt"
             hips_angle_feedback = "Hips are leaning towards the right side. Make sure the hips are far back in the wheelchair and aligned."
             for i in range(23,27):
@@ -442,12 +441,12 @@ class BlazeposeOpenvino:
 
         #HEAD LEANING FORWARD
         #print(head_lean)
-        if head_lean<min_head_lean_thres:
+        if head_lean<thresholds["head_lean"]["min"]:
             head_lean_status = "Neck Lean" 
             head_lean_feedback = "Head is leaning towards the front." 
             for i in range(11):
                 COLORS_FULL_BODY[i]=bad
-        elif head_lean>max_head_lean_thres:
+        elif head_lean>thresholds["head_lean"]["max"]:
             head_lean_status = "Neck Lean" 
             head_lean_feedback = "Head is leaning towards the back."
             for i in range(11):
@@ -459,12 +458,12 @@ class BlazeposeOpenvino:
 
         #BODY LEANING FORWARD
         #print(body_lean)
-        if body_lean<min_body_lean_thres:
+        if body_lean<thresholds["body_lean"]["min"]:
             body_lean_status = "Body Lean" 
             body_lean_feedback = "Body is leaning towards the front." 
             for i in range(11,15):
                 COLORS_FULL_BODY[i]=bad
-        elif body_lean>max_body_lean_thres:
+        elif body_lean>thresholds["body_lean"]["max"]:
             body_lean_status = "Body Lean" 
             body_lean_feedback = "Body is leaning towards the back."
             for i in range(11,15):

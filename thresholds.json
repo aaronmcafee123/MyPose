@@ -1,0 +1,22 @@
+{
+    "head_angle": {
+        "min": 98.0,
+        "max": 108.0
+    },
+    "shoulder_angle": {
+        "min": -2.5,
+        "max": 2.5
+    },
+    "hips_angle": {
+        "min": -5.0,
+        "max": 5.0
+    },
+    "head_lean": {
+        "min": -2.5,
+        "max": 2.5
+    },
+    "body_lean": {
+        "min": -2.5,
+        "max": 2.5
+    }
+}

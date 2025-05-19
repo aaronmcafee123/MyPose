@@ -1,13 +1,34 @@
 import cv2
 from PIL import Image
 import base64
-
+import json
 import os
 
 from werkzeug.utils import secure_filename
-from flask import Flask, render_template, request, Response, url_for, render_template_string, send_from_directory
+from flask import Flask, render_template, request, Response, url_for, render_template_string, send_from_directory, redirect
 
 from BlazeposeOpenvino import BlazeposeOpenvino, POSE_DETECTION_MODEL, LANDMARK_MODEL_FULL
+
+# Load thresholds from JSON file
+def load_thresholds():
+    try:
+        with open('thresholds.json', 'r') as f:
+            return json.load(f)
+    except FileNotFoundError:
+        # Return defaults if file doesn't exist
+        return {
+            "head_angle": {"min": 85, "max": 95},
+            "shoulder_angle": {"min": -2.5, "max": 2.5},
+            "hips_angle": {"min": -5, "max": 5},
+            "head_lean": {"min": -2.5, "max": 2.5},
+            "body_lean": {"min": -2.5, "max": 2.5}
+        }
+
+def save_thresholds(thresholds):
+    with open('thresholds.json', 'w') as f:
+        json.dump(thresholds, f, indent=4)
+
+thresholds = load_thresholds()
 
 OUTPUT_IMG = "output.jpg"
 
@@ -27,7 +48,7 @@ os.makedirs(UPLOAD_FOLDER, exist_ok=True)
 
 
 ## IMAGE
-def process_image(img):
+def process_image(img, thresholds):
 
     print("-- opening ", img)
     #frame = Image.open(img)
@@ -47,7 +68,8 @@ def process_image(img):
                 crop=False,
                 multi_detection=False,
                 force_detection=False,
-                output=OUTPUT_IMG)
+                output=OUTPUT_IMG,
+                thresholds=thresholds)
 
     img_ht = ht.run()
 
@@ -66,7 +88,7 @@ def upload():
             filepath = os.path.join(app.config['UPLOAD_FOLDER'], filename)
             file.save(filepath)
             #
-            (processed_img, posture_feedback_history) = process_image(filepath)
+            (processed_img, posture_feedback_history) = process_image(filepath, thresholds)
             color_value='btn-success'
             if posture_feedback_history['posture_quality'] < 50:
                 color_value = 'btn-danger'
@@ -79,9 +101,38 @@ def upload():
                                    overall_posture=posture_feedback_history['overall_posture'],
                                    posture_quality=int(posture_feedback_history['posture_quality']),
                                    posture_status=posture_feedback_history['posture_status'],
-                                   feedback=posture_feedback_history['feedback'])
+                                   feedback=posture_feedback_history['feedback'],
+                                   thresholds=thresholds)
 
     return render_template('upload.html')
+
+@app.route('/update_thresholds', methods=['POST'])
+def update_thresholds():
+    global thresholds
+    thresholds = {
+        "head_angle": {
+            "min": float(request.form['head_angle']) - 5,
+            "max": float(request.form['head_angle']) + 5
+        },
+        "shoulder_angle": {
+            "min": float(request.form['shoulder_angle']) - 2.5,
+            "max": float(request.form['shoulder_angle']) + 2.5
+        },
+        "hips_angle": {
+            "min": float(request.form['hips_angle']) - 5,
+            "max": float(request.form['hips_angle']) + 5
+        },
+        "head_lean": {
+            "min": float(request.form['head_lean']) - 2.5,
+            "max": float(request.form['head_lean']) + 2.5
+        },
+        "body_lean": {
+            "min": float(request.form['body_lean']) - 2.5,
+            "max": float(request.form['body_lean']) + 2.5
+        }
+    }
+    save_thresholds(thresholds)
+    return redirect('/')
 
 @app.route('/uploads/<filename>')
 def uploaded_file(filename):
@@ -89,4 +140,3 @@ def uploaded_file(filename):
 
 if __name__ == '__main__':
     app.run(host='localhost',port=9999, debug=True, threaded=True)
-
