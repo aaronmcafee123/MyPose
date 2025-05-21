@@ -52,7 +52,7 @@
                           <h5 class="card-title m-1 mb-3">Posture Threshold Settings</h5>
                           <form action="/update_thresholds" method="post">
                               <div class="mb-3">
-                                  <label for="head_angle" class="form-label">Head Angle (85-95 degrees)</label>
+                                  <label for="head_angle" class="form-label">Head Angle ({{ thresholds.head_angle.min }}-{{ thresholds.head_angle.max }} degrees)</label>
                                   <input type="range" class="form-range" min="70" max="110" step="1" id="head_angle" name="head_angle" value="{{ (thresholds.head_angle.min + thresholds.head_angle.max)/2 }}">
                               </div>
                               <div class="mb-3">
