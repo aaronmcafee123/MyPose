@@ -111,8 +111,8 @@ def update_thresholds():
     global thresholds
     thresholds = {
         "head_angle": {
-            "min": float(request.form['head_angle']) - 5,
-            "max": float(request.form['head_angle']) + 5
+            "min": float(request.form['head_angle']) - 85,
+            "max": float(request.form['head_angle']) + 95
         },
         "shoulder_angle": {
             "min": float(request.form['shoulder_angle']) - 2.5,
@@ -123,12 +123,12 @@ def update_thresholds():
             "max": float(request.form['hips_angle']) + 5
         },
         "head_lean": {
-            "min": float(request.form['head_lean']) - 2.5,
-            "max": float(request.form['head_lean']) + 2.5
+            "min": float(request.form['head_lean']) - 0.2,
+            "max": float(request.form['head_lean']) + 0.2
         },
         "body_lean": {
-            "min": float(request.form['body_lean']) - 2.5,
-            "max": float(request.form['body_lean']) + 2.5
+            "min": float(request.form['body_lean']) - 0.15,
+            "max": float(request.form['body_lean']) + 0.15
         }
     }
     save_thresholds(thresholds)

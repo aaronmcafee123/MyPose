@@ -87,8 +87,8 @@ class BlazeposeOpenvino:
             "head_angle": {"min": 85, "max": 95},
             "shoulder_angle": {"min": -2.5, "max": 2.5},
             "hips_angle": {"min": -5, "max": 5},
-            "head_lean": {"min": -2.5, "max": 2.5},
-            "body_lean": {"min": -2.5, "max": 2.5}
+            "head_lean": {"min": -0.2, "max": 0.2},
+            "body_lean": {"min": -0.15, "max": 0.15}
         }
         
         self.pd_score_thresh = pd_score_thresh

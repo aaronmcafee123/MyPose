@@ -1,7 +1,7 @@
 {
     "head_angle": {
-        "min": 98.0,
-        "max": 108.0
+        "min": 85.0,
+        "max": 95.0
     },
     "shoulder_angle": {
         "min": -2.5,
@@ -12,11 +12,11 @@
         "max": 5.0
     },
     "head_lean": {
-        "min": -2.5,
-        "max": 2.5
+        "min": -0.2,
+        "max": 0.2
     },
     "body_lean": {
-        "min": -2.5,
-        "max": 2.5
+        "min": -0.15,
+        "max": 0.15
     }
 }
