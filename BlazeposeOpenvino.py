@@ -87,8 +87,8 @@ class BlazeposeOpenvino:
             "head_angle": {"min": 85, "max": 95},
             "shoulder_angle": {"min": -2.5, "max": 2.5},
             "hips_angle": {"min": -5, "max": 5},
-            "head_lean": {"min": -0.2, "max": 0.2},
-            "body_lean": {"min": -0.15, "max": 0.15}
+            "head_lean": {"min": -0.3, "max": 0.3},
+            "body_lean": {"min": -0.1, "max": 0.1}
         }
         
         self.pd_score_thresh = pd_score_thresh
@@ -379,7 +379,7 @@ class BlazeposeOpenvino:
         shoulder_orientation=360*atan2(r.landmarks[11,1]-r.landmarks[12,1],r.landmarks[11,0]-r.landmarks[12,0])/2/pi
         hips_orientation=360*atan2(r.landmarks[23,1]-r.landmarks[24,1],r.landmarks[23,0]-r.landmarks[24,0])/2/pi
         head_lean=r.landmarks[0,2]-((r.landmarks[11,2]+r.landmarks[12,2])/2)
-        body_lean=r.landmarks[34,2]-((r.landmarks[11,2]+r.landmarks[12,2])/2)
+        body_lean=((r.landmarks[11,2]+r.landmarks[12,2])/2)
 
         #HEAD
         head_angle=head_orientation-shoulder_orientation
