@@ -7,8 +7,9 @@ from FPS import FPS, now
 import argparse
 import os
 #from openvino.inference_engine import IENetwork, IECore
-from openvino.runtime import Core
-from math import atan2
+from openvino.runtime import Core  
+from math import *
+import base64
 
 import open3d as o3d
 from o3d_utils import create_segment, create_grid
@@ -37,7 +38,8 @@ LINES_UPPER_BODY = [[12,11,23,24,12],
                     [10,9],
                     ]
 # LINE_MESH_*_BODY are used when drawing the skeleton in 3D. 
-rgb = {"right":(0,1,0), "left":(1,0,0), "middle":(1,1,0)}
+rgb = {"good":(0,255,0), "bad":(0,0,255), "adequate":(0,255,255)}
+
 LINE_MESH_FULL_BODY = [ [9,10],[4,6],[1,3],
                         [12,14],[14,16],[16,20],[20,18],[18,16],
                         [12,11],[11,23],[23,24],[24,12],
@@ -46,28 +48,21 @@ LINE_MESH_FULL_BODY = [ [9,10],[4,6],[1,3],
                         [23,25],[25,27],[29,31]]
 LINE_TEST = [ [12,11],[11,23],[23,24],[24,12]]
 
-COLORS_FULL_BODY = ["middle","right","left",
-                    "right","right","right","right","right",
-                    "middle","middle","middle","middle",
-                    "left","left","left","left","left",
-                    "right","right","right","left","left","left"]
+COLORS_FULL_BODY = ["adequate","adequate","adequate","adequate","adequate",
+            "adequate","adequate","adequate","adequate","adequate",
+            "adequate","adequate","adequate","adequate","adequate",
+            "adequate","adequate","adequate","adequate","adequate",
+            "adequate","adequate","adequate","adequate","adequate",
+            "adequate","adequate","adequate","adequate","adequate",
+            "adequate","adequate","adequate"]
+
 COLORS_FULL_BODY = [rgb[x] for x in COLORS_FULL_BODY]
+
 LINE_MESH_UPPER_BODY = [[9,10],[4,6],[1,3],
                         [12,14],[14,16],[16,20],[20,18],[18,16],
                         [12,11],[11,23],[23,24],[24,12],
                         [11,13],[13,15],[15,19],[19,17],[17,15]
                         ]
-
-# For gesture demo
-semaphore_flag = {
-        (3,4):'A', (2,4):'B', (1,4):'C', (0,4):'D',
-        (4,7):'E', (4,6):'F', (4,5):'G', (2,3):'H',
-        (0,3):'I', (0,6):'J', (3,0):'K', (3,7):'L',
-        (3,6):'M', (3,5):'N', (2,1):'O', (2,0):'P',
-        (2,7):'Q', (2,6):'R', (2,5):'S', (1,0):'T',
-        (1,7):'U', (0,5):'V', (7,6):'W', (7,5):'X',
-        (1,6):'Y', (5,6):'Z'
-}
 
 class BlazeposeOpenvino:
     def __init__(self, input_src=None,
@@ -77,7 +72,7 @@ class BlazeposeOpenvino:
                 lm_xml=LANDMARK_MODEL_FULL,
                 lm_device="CPU",
                 lm_score_threshold=0.5,
-                use_gesture=False,
+                pose_correction=True,
                 smoothing= True,
                 filter_window_size=5,
                 filter_velocity_scale=10,
@@ -85,13 +80,22 @@ class BlazeposeOpenvino:
                 crop=False,
                 multi_detection=False,
                 force_detection=False,
-                output=None):
+                output=None,
+                thresholds=None
+            ):
+        self.thresholds = thresholds or {
+            "head_angle": {"min": 85, "max": 95},
+            "shoulder_angle": {"min": -2.5, "max": 2.5},
+            "hips_angle": {"min": -5, "max": 5},
+            "head_lean": {"min": -0.3, "max": 0.3},
+            "body_lean": {"min": -0.1, "max": 0.1}
+        }
         
         self.pd_score_thresh = pd_score_thresh
         self.pd_nms_thresh = pd_nms_thresh
         self.lm_score_threshold = lm_score_threshold
         self.full_body = True
-        self.use_gesture = use_gesture
+        self.pose_correction = pose_correction
         self.smoothing = smoothing
         self.show_3d = show_3d
         self.crop = crop
@@ -101,7 +105,6 @@ class BlazeposeOpenvino:
             print("Warning: with multi-detection, smoothing filter is disabled and pose detection is forced on every frame.")
             self.smoothing = False
             self.force_detection = True
-        
         
         if input_src.endswith('.jpg') or input_src.endswith('.png') :
             self.input_type= "image"
@@ -119,7 +122,7 @@ class BlazeposeOpenvino:
             video_height = int(self.cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
         print("Video FPS:", self.video_fps)
 
-        # The full body landmark model predict 39 landmarks.
+        # The full body landmark model predicts 39 landmarks.
         # We are interested in the first 35 landmarks 
         # from 1 to 33 correspond to the well documented body parts,
         # 34th (mid hips) and 35th (a point above the head) are used to predict ROI of next frame
@@ -152,16 +155,14 @@ class BlazeposeOpenvino:
         self.nb_anchors = self.anchors.shape[0]
         print(f"{self.nb_anchors} anchors have been created")
 
-        
-
         # Rendering flags
         self.show_pd_box = False
         self.show_pd_kps = False
         self.show_rot_rect = False
         self.show_landmarks = True
         self.show_scores = False
-        self.show_gesture = self.use_gesture
-        self.show_fps = True
+        self.show_posture = self.pose_correction
+        self.show_fps = False
         self.show_segmentation = False
 
         if self.show_3d:
@@ -188,6 +189,12 @@ class BlazeposeOpenvino:
                 fourcc = cv2.VideoWriter_fourcc(*"MJPG")
                 self.output = cv2.VideoWriter(output,fourcc,self.video_fps,(video_width, video_height)) 
 
+        # Initialize posture feedback history
+        self.posture_feedback_history = []
+        self.max_feedback_history = 10  # Store last 10 feedback messages
+        self.feedback_display_duration = 3  # Display feedback for 3 seconds
+        self.last_feedback_time = time.time()
+        
     def load_models(self, pd_xml, pd_device, lm_xml, lm_device):
 
         print("Loading Inference Engine")
@@ -247,7 +254,6 @@ class BlazeposeOpenvino:
         self.lm_infer_time_cumul = 0
         self.lm_infer_nb = 0
 
-    
     def pd_postprocess(self, inference):
         scores = np.squeeze(inference[self.pd_scores])  # 2254
         bboxes = inference[self.pd_bboxes][0] # 2254x12
@@ -286,7 +292,6 @@ class BlazeposeOpenvino:
                         (50, self.frame_size//2), 
                         cv2.FONT_HERSHEY_PLAIN, 1.5, (255,255,0), 2)
 
-   
     def lm_postprocess(self, region, inference):
         region.lm_score = np.squeeze(inference[self.lm_score])
         if region.lm_score > self.lm_score_threshold:  
@@ -333,7 +338,7 @@ class BlazeposeOpenvino:
             lm_xyz = np.hstack((lm_xy, lm_z))
             if self.smoothing:
                 lm_xyz = self.filter.apply(lm_xyz)
-            region.landmarks_padded = lm_xyz.astype(np.int)
+            region.landmarks_padded = lm_xyz.astype(int)
             # If we added padding to make the image square, we need to remove this padding from landmark coordinates
             # region.landmarks_abs contains absolute landmark coordinates in the original image (padding removed))
             region.landmarks_abs = region.landmarks_padded.copy()
@@ -342,12 +347,179 @@ class BlazeposeOpenvino:
             if self.pad_w > 0:
                 region.landmarks_abs[:,0] -= self.pad_w
 
-            if self.use_gesture: self.recognize_gesture(region)
+            if self.pose_correction: self.posture_classification(region,COLORS_FULL_BODY)
 
             if self.show_segmentation:
                 self.seg = np.squeeze(inference[self.lm_segmentation]) 
                 self.seg = 1 / (1 + np.exp(-self.seg))
 
+    def posture_classification(self, r, COLORS_FULL_BODY):      
+        posture_status={}
+        head_angle_status = "Unknown"
+        shoulder_angle_status = "Unknown"
+        hips_angle_status = "Unknown"
+        head_lean_status = "Unknown"
+        body_lean_status = "Unknown"
+        feedback={}
+        head_angle_feedback=""
+        head_angle_feedback = ""
+        shoulder_angle_feedback = ""
+        hips_angle_feedback = ""
+        head_lean_feedback = ""
+        body_lean_feedback = ""
+        success=0
+        overall_posture='Unknown'
+        good=(0,255,0)
+        bad=(0,0,255)
+
+        # Use thresholds passed to constructor
+        thresholds = self.thresholds
+
+        head_orientation=360*atan2(r.landmarks[0,1]-r.landmarks[34,1],r.landmarks[0,0]-r.landmarks[34,0])/2/pi
+        shoulder_orientation=360*atan2(r.landmarks[11,1]-r.landmarks[12,1],r.landmarks[11,0]-r.landmarks[12,0])/2/pi
+        hips_orientation=360*atan2(r.landmarks[23,1]-r.landmarks[24,1],r.landmarks[23,0]-r.landmarks[24,0])/2/pi
+        head_lean=r.landmarks[0,2]-((r.landmarks[11,2]+r.landmarks[12,2])/2)
+        body_lean=((r.landmarks[11,2]+r.landmarks[12,2])/2)
+
+        #HEAD
+        head_angle=head_orientation-shoulder_orientation
+        #print(head_angle)
+        if head_angle<thresholds["head_angle"]["min"]:
+            head_angle_status = "Head Tilt" ## UPDATE TO TAKE INTO ACCOUNT QUALITY AT END
+            head_angle_feedback = "Head is leaning towards the left side." ##CHECK IF NOT CORRECT
+            for i in range(11):
+                COLORS_FULL_BODY[i]=bad
+        elif head_angle>thresholds["head_angle"]["max"]:
+            head_angle_status = "Head Tilt" ## UPDATE TO TAKE INTO ACCOUNT QUALITY AT END
+            head_angle_feedback = "Head is leaning towards the right side."
+            for i in range(11):
+                COLORS_FULL_BODY[i]=bad
+        else:
+            head_angle_status = "Head Well-Positioned"
+            head_angle_feedback = 'Well Done!'
+            success+=1
+            for i in range(11):
+                COLORS_FULL_BODY[i]=good
+        
+        #SHOULDERS
+        #print(shoulder_orientation)
+        if shoulder_orientation<thresholds["shoulder_angle"]["min"]:
+            shoulder_angle_status = "Shoulder Tilt" 
+            shoulder_angle_feedback = "Shoulders are leaning towards the left side." 
+            for i in range(11,15):
+                COLORS_FULL_BODY[i]=bad
+        elif shoulder_orientation>thresholds["shoulder_angle"]["max"]:
+            shoulder_angle_status = "Shoulder Tilt"
+            shoulder_angle_feedback = "Shoulders are leaning towards the right side."
+            for i in range(11,15):
+                COLORS_FULL_BODY[i]=bad
+        else:
+            shoulder_angle_status = "Shoulders Well-Positioned"
+            shoulder_angle_feedback = 'Well Done!'
+            success+=1
+            for i in range(11,15):
+                COLORS_FULL_BODY[i]=good
+
+        #HIPS
+        #print(hips_orientation)
+        if hips_orientation<thresholds["hips_angle"]["min"]:
+            hips_angle_status = "Hip Tilt" 
+            hips_angle_feedback = "Hips are leaning towards the left side. Make sure the hips are far back in the wheelchair and aligned." ##CHECK IF NOT CORRECT
+            for i in range(23,27):
+                COLORS_FULL_BODY[i]=bad
+        elif hips_orientation>thresholds["hips_angle"]["max"]:
+            hips_angle_status = "Hip Tilt"
+            hips_angle_feedback = "Hips are leaning towards the right side. Make sure the hips are far back in the wheelchair and aligned."
+            for i in range(23,27):
+                COLORS_FULL_BODY[i]=bad
+        else:
+            hips_angle_status = "Hips Well-Positioned"
+            hips_angle_feedback = 'Well Done!'
+            success+=1
+            for i in range(23,27):
+                COLORS_FULL_BODY[i]=good
+
+        #HEAD LEANING FORWARD
+        #print(head_lean)
+        if head_lean<thresholds["head_lean"]["min"]:
+            head_lean_status = "Neck Lean" 
+            head_lean_feedback = "Head is leaning towards the front." 
+            for i in range(11):
+                COLORS_FULL_BODY[i]=bad
+        elif head_lean>thresholds["head_lean"]["max"]:
+            head_lean_status = "Neck Lean" 
+            head_lean_feedback = "Head is leaning towards the back."
+            for i in range(11):
+                COLORS_FULL_BODY[i]=bad
+        else:
+            head_lean_status = "Neck Well-Positioned"
+            head_lean_feedback = 'Well Done!'
+            success+=1
+
+        #BODY LEANING FORWARD
+        #print(body_lean)
+        if body_lean<thresholds["body_lean"]["min"]:
+            body_lean_status = "Body Lean" 
+            body_lean_feedback = "Body is leaning towards the front." 
+            for i in range(11,15):
+                COLORS_FULL_BODY[i]=bad
+        elif body_lean>thresholds["body_lean"]["max"]:
+            body_lean_status = "Body Lean" 
+            body_lean_feedback = "Body is leaning towards the back."
+            for i in range(11,15):
+                COLORS_FULL_BODY[i]=bad
+        else:
+            body_lean_status = "Body Well-Positioned"
+            body_lean_feedback = 'Well Done!'
+            success+=1 
+
+        posture_quality=success*20
+
+        if posture_quality<50:
+            overall_posture='BAD'
+        elif posture_quality<75:
+            overall_posture='ADEQUATE'
+        else:
+            overall_posture='GOOD'
+
+        feedback['head_angle_feedback']=head_angle_feedback
+        feedback['shoulder_angle_feedback']=shoulder_angle_feedback
+        feedback['hips_angle_feedback']=hips_angle_feedback
+        feedback['head_lean_feedback']=head_lean_feedback
+        feedback['body_lean_feedback']=body_lean_feedback
+
+        posture_status['head_angle_status']=head_angle_status
+        posture_status['shoulder_angle_status']=shoulder_angle_status
+        posture_status['hips_angle_status']=hips_angle_status
+        posture_status['head_lean_status']=head_lean_status
+        posture_status['body_lean_status']=body_lean_status
+
+        # Store feedback
+        self.add_feedback(feedback, posture_status, overall_posture, posture_quality)
+        
+        # Set posture display 
+        r.posture = posture_status
+
+    def add_feedback(self, feedback, posture_status, overall_posture, posture_quality):
+        """Add feedback to history with timestamp"""
+        now = time.time()
+        self.posture_feedback_history.append({
+            'feedback': feedback,
+            'posture_status': posture_status,
+            'overall_posture': overall_posture,
+            'posture_quality': posture_quality,
+            'time': now
+        })
+        
+        # Keep only recent feedback
+        if len(self.posture_feedback_history) > self.max_feedback_history:
+            self.posture_feedback_history.pop(0)
+        
+        # Update timestamp for display purposes
+        self.last_feedback_time = now
+
+    def get_posture_feedback_history(self):
+        return self.posture_feedback_history
 
     def lm_render(self, frame, region):
         if region.lm_score > self.lm_score_threshold:
@@ -374,16 +546,11 @@ class BlazeposeOpenvino:
                 list_connections = LINES_FULL_BODY if self.full_body else LINES_UPPER_BODY
                 lines = [np.array([region.landmarks_padded[point,:2] for point in line]) for line in list_connections]
                 cv2.polylines(frame, lines, False, (255, 180, 90), 2, cv2.LINE_AA)
+
+                colors = COLORS_FULL_BODY
                 
                 for i,x_y in enumerate(region.landmarks_padded[:self.nb_lms-2,:2]):
-                    if i > 10:
-                        color = (0,255,0) if i%2==0 else (0,0,255)
-                    elif i == 0:
-                        color = (0,255,255)
-                    elif i in [4,5,6,8,10]:
-                        color = (0,255,0)
-                    else:
-                        color = (0,0,255)
+                    color=colors[i]
                     cv2.circle(frame, (x_y[0], x_y[1]), 4, color, -11)
 
                 if self.show_3d:
@@ -395,57 +562,10 @@ class BlazeposeOpenvino:
                         line = create_segment(points[a], points[b], radius=5, color=colors[i])
                         if line: self.vis3d.add_geometry(line, reset_bounding_box=False)
                     
-                    
-
             if self.show_scores:
                 cv2.putText(frame, f"Landmark score: {region.lm_score:.2f}", 
                         (region.landmarks_padded[24,0]-10, region.landmarks_padded[24,1]+90), 
                         cv2.FONT_HERSHEY_PLAIN, 1.5, (255,255,0), 2)
-            if self.use_gesture and self.show_gesture:
-                cv2.putText(frame, region.gesture, (region.landmarks_padded[6,0]-10, region.landmarks_padded[6,1]-50), 
-                        cv2.FONT_HERSHEY_PLAIN, 5, (0,1190,255), 3)
-            
-
-
-          
-    #def recognize_gesture(self, r):           
-#
- #       def angle_with_y(v):
-            # v: 2d vector (x,y)
-            # Returns angle in degree ofv with y-axis of image plane
-  #          if v[1] == 0:
-   #             return 90
-    #        angle = atan2(v[0], v[1])
-     #       return np.degrees(angle)
-
-        # For the demo, we want to recognize the flag semaphore alphabet
-        # For this task, we just need to measure the angles of both arms with vertical
-      #  right_arm_angle = angle_with_y(r.landmarks_abs[14,:2] - r.landmarks_abs[12,:2])
-       # left_arm_angle = angle_with_y(r.landmarks_abs[13,:2] - r.landmarks_abs[11,:2])
-        #right_pose = int((right_arm_angle +202.5) / 45) % 8
-        #left_pose = int((left_arm_angle +202.5) / 45) % 8
-        #r.gesture = semaphore_flag.get((right_pose, left_pose), None)
-
-    def recognize_gesture(self, r):    #repurposed gesture recognition for posture correction
-
-        left_tilt = r.landmarks[11, 2] - r.landmarks[23, 2]#11 is left shoulder, 23 left hip
-        right_tilt = r.landmarks[12, 2] - r.landmarks[24, 2]#12 is right shoulder, 24 is right hip
-
-        avg_tilt = (left_tilt + right_tilt) / 2.0
-        r.gesture = "Bad Posture"
-
-        threshold = -0.1
-        if avg_tilt < threshold:
-            r.gesture = "Bad Posture"
-            if left_tilt > right_tilt:
-                print("right side slouching")
-            elif right_tilt > left_tilt:
-                print("left side slouching")
-        else:
-            r.gesture = "Good Posture"
-            print("well done!")
-
-        
                 
     def run(self):
 
@@ -580,11 +700,8 @@ class BlazeposeOpenvino:
                 # Detection NN hasn't found any body
                 get_new_frame = True
 
-                    
-
             self.fps.update()  
-                         
-                            
+                                 
             if self.show_3d:
                 self.vis3d.poll_events()
                 self.vis3d.update_renderer()
@@ -596,7 +713,8 @@ class BlazeposeOpenvino:
 
             if self.show_fps:
                 self.fps.draw(annotated_frame, orig=(50,50), size=1, color=(240,180,100))
-            cv2.imshow("Blazepose", annotated_frame)
+            #cv2.imshow("Blazepose", annotated_frame)
+            imgencode = cv2.imencode('.jpg', annotated_frame)[1]
 
             if self.output:
                 if self.input_type == "image":
@@ -622,7 +740,7 @@ class BlazeposeOpenvino:
             elif key == ord('5'):
                 self.show_scores = not self.show_scores
             elif key == ord('6'):
-                self.show_gesture = not self.show_gesture
+                self.show_posture = not self.show_posture
             elif key == ord('f'):
                 self.show_fps = not self.show_fps
             elif key == ord('s'):
@@ -640,14 +758,15 @@ class BlazeposeOpenvino:
 
         if self.output and self.input_type != "image":
             self.output.release()
-           
 
+        return base64.b64encode(imgencode).decode('utf-8')
+           
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument('-i', '--input', type=str, default='0', 
                         help="Path to video or image file to use as input (default=%(default)s)")
-    parser.add_argument('-g', '--gesture', action="store_true", 
-                        help="enable gesture recognition")
+    parser.add_argument('-g', '--posture', action="store_true", 
+                        help="enable posture recognition")
     parser.add_argument("--pd_xml", type=str,
                         help="Path to an .xml file for pose detection model")
     parser.add_argument("--pd_device", default='CPU', type=str,
@@ -698,7 +817,7 @@ if __name__ == "__main__":
                     smoothing=not args.no_smoothing,
                     filter_window_size=args.filter_window_size,
                     filter_velocity_scale=args.filter_velocity_scale,
-                    use_gesture=args.gesture,
+                    pose_correction=args.posture,
                     show_3d=args.show_3d,
                     crop=args.crop,
                     multi_detection=args.multi_detection,
